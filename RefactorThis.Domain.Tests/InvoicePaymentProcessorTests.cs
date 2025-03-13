@@ -1,65 +1,79 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using Moq;
+using System;
 using NUnit.Framework;
 using RefactorThis.Persistence;
+using System.Collections.Generic;
+using RefactorThis.Domain.Helpers;
 
 namespace RefactorThis.Domain.Tests
 {
 	[TestFixture]
 	public class InvoicePaymentProcessorTests
 	{
-		[Test]
+        private Mock<IInvoiceRepository> _invoiceRepository;
+        private Mock<IPaymentProcessorFactory> _paymentProcessorFactory;
+        private InvoiceService _invoiceService;
+
+        [SetUp]
+        public void Setup()
+        {
+            _invoiceRepository = new Mock<IInvoiceRepository>();
+            _paymentProcessorFactory = new Mock<IPaymentProcessorFactory>();
+            _invoiceService = new InvoiceService(_invoiceRepository.Object, _paymentProcessorFactory.Object);
+        }
+
+        [Test]
 		public void ProcessPayment_Should_ThrowException_When_NoInoiceFoundForPaymentReference( )
 		{
-			var repo = new InvoiceRepository( );
+            var payment = new Payment();
+            var failureMessage = "";
 
-			Invoice invoice = null;
-			var paymentProcessor = new InvoiceService( repo );
+            _invoiceRepository.Setup(repository => repository.GetInvoice("REF00001")).Returns((Invoice)null);
 
-			var payment = new Payment( );
-			var failureMessage = "";
+            try
+            {
+                var result = _invoiceService.ProcessPayment(payment);
+            }
+            catch (InvalidOperationException e)
+            {
+                failureMessage = e.Message;
+            }
 
-			try
-			{
-				var result = paymentProcessor.ProcessPayment( payment );
-			}
-			catch ( InvalidOperationException e )
-			{
-				failureMessage = e.Message;
-			}
-
-			Assert.AreEqual( "There is no invoice matching this payment", failureMessage );
-		}
+            Assert.That(failureMessage, Is.EqualTo("There is no invoice matching this payment"));
+        }
 
 		[Test]
 		public void ProcessPayment_Should_ReturnFailureMessage_When_NoPaymentNeeded( )
 		{
-			var repo = new InvoiceRepository( );
-
-			var invoice = new Invoice( repo )
+            var invoice = new Invoice(_invoiceRepository.Object)
 			{
 				Amount = 0,
 				AmountPaid = 0,
 				Payments = null
 			};
 
-			repo.Add( invoice );
+            IHandlePaymentHelper handlePaymentHelper = new HandlePaymentHelper();
+            IHandleInvoiceHelper handleInvoiceHelper = new HandleInvoiceHelper();
 
-			var paymentProcessor = new InvoiceService( repo );
+            _invoiceRepository.Setup(repository => repository.GetInvoice(It.IsAny<string>())).Returns(invoice);
+			_paymentProcessorFactory.Setup(factory => factory.Create(It.IsAny<InvoiceType>())).Returns(new StandardPaymentProcessor(handleInvoiceHelper, handlePaymentHelper));  
 
-			var payment = new Payment( );
+            var result = _invoiceService.ProcessPayment(new Payment());
 
-			var result = paymentProcessor.ProcessPayment( payment );
+			_invoiceRepository.Verify(repository => repository.SaveInvoice(It.IsAny<Invoice>()), Times.Once);
 
-			Assert.AreEqual( "no payment needed", result );
+            Assert.AreEqual( "no payment needed", result );
 		}
 
 		[Test]
 		public void ProcessPayment_Should_ReturnFailureMessage_When_InvoiceAlreadyFullyPaid( )
 		{
-			var repo = new InvoiceRepository( );
+            IInvoiceRepository invoiceRepository = new InvoiceRepository();
+            IHandlePaymentHelper handlePaymentHelper = new HandlePaymentHelper();
+            IHandleInvoiceHelper handleInvoiceHelper = new HandleInvoiceHelper();
+            IPaymentProcessorFactory paymentProcessorFactory = new PaymentProcessorFactory(handleInvoiceHelper, handlePaymentHelper);
 
-			var invoice = new Invoice( repo )
+            var invoice = new Invoice(invoiceRepository)
 			{
 				Amount = 10,
 				AmountPaid = 10,
@@ -71,9 +85,9 @@ namespace RefactorThis.Domain.Tests
 					}
 				}
 			};
-			repo.Add( invoice );
+            invoiceRepository.Add( invoice );
 
-			var paymentProcessor = new InvoiceService( repo );
+			var paymentProcessor = new InvoiceService(invoiceRepository, paymentProcessorFactory);
 
 			var payment = new Payment( );
 
@@ -85,8 +99,12 @@ namespace RefactorThis.Domain.Tests
 		[Test]
 		public void ProcessPayment_Should_ReturnFailureMessage_When_PartialPaymentExistsAndAmountPaidExceedsAmountDue( )
 		{
-			var repo = new InvoiceRepository( );
-			var invoice = new Invoice( repo )
+            IInvoiceRepository invoiceRepository = new InvoiceRepository();
+            IHandlePaymentHelper handlePaymentHelper = new HandlePaymentHelper();
+            IHandleInvoiceHelper handleInvoiceHelper = new HandleInvoiceHelper();
+            IPaymentProcessorFactory paymentProcessorFactory = new PaymentProcessorFactory(handleInvoiceHelper, handlePaymentHelper);
+
+            var invoice = new Invoice(invoiceRepository)
 			{
 				Amount = 10,
 				AmountPaid = 5,
@@ -98,9 +116,9 @@ namespace RefactorThis.Domain.Tests
 					}
 				}
 			};
-			repo.Add( invoice );
+            invoiceRepository.Add( invoice );
 
-			var paymentProcessor = new InvoiceService( repo );
+			var paymentProcessor = new InvoiceService( invoiceRepository, paymentProcessorFactory );
 
 			var payment = new Payment( )
 			{
@@ -115,16 +133,20 @@ namespace RefactorThis.Domain.Tests
 		[Test]
 		public void ProcessPayment_Should_ReturnFailureMessage_When_NoPartialPaymentExistsAndAmountPaidExceedsInvoiceAmount( )
 		{
-			var repo = new InvoiceRepository( );
-			var invoice = new Invoice( repo )
+            IInvoiceRepository invoiceRepository = new InvoiceRepository();
+            IHandlePaymentHelper handlePaymentHelper = new HandlePaymentHelper();
+            IHandleInvoiceHelper handleInvoiceHelper = new HandleInvoiceHelper();
+            IPaymentProcessorFactory paymentProcessorFactory = new PaymentProcessorFactory(handleInvoiceHelper, handlePaymentHelper);
+
+            var invoice = new Invoice( invoiceRepository )
 			{
 				Amount = 5,
 				AmountPaid = 0,
 				Payments = new List<Payment>( )
 			};
-			repo.Add( invoice );
+			invoiceRepository.Add( invoice );
 
-			var paymentProcessor = new InvoiceService( repo );
+			var paymentProcessor = new InvoiceService( invoiceRepository, paymentProcessorFactory );
 
 			var payment = new Payment( )
 			{
@@ -139,8 +161,12 @@ namespace RefactorThis.Domain.Tests
 		[Test]
 		public void ProcessPayment_Should_ReturnFullyPaidMessage_When_PartialPaymentExistsAndAmountPaidEqualsAmountDue( )
 		{
-			var repo = new InvoiceRepository( );
-			var invoice = new Invoice( repo )
+            IInvoiceRepository invoiceRepository = new InvoiceRepository();
+            IHandlePaymentHelper handlePaymentHelper = new HandlePaymentHelper();
+            IHandleInvoiceHelper handleInvoiceHelper = new HandleInvoiceHelper();
+            IPaymentProcessorFactory paymentProcessorFactory = new PaymentProcessorFactory(handleInvoiceHelper, handlePaymentHelper);
+
+            var invoice = new Invoice( invoiceRepository )
 			{
 				Amount = 10,
 				AmountPaid = 5,
@@ -152,9 +178,9 @@ namespace RefactorThis.Domain.Tests
 					}
 				}
 			};
-			repo.Add( invoice );
+			invoiceRepository.Add( invoice );
 
-			var paymentProcessor = new InvoiceService( repo );
+			var paymentProcessor = new InvoiceService(invoiceRepository, paymentProcessorFactory);
 
 			var payment = new Payment( )
 			{
@@ -169,16 +195,20 @@ namespace RefactorThis.Domain.Tests
 		[Test]
 		public void ProcessPayment_Should_ReturnFullyPaidMessage_When_NoPartialPaymentExistsAndAmountPaidEqualsInvoiceAmount( )
 		{
-			var repo = new InvoiceRepository( );
-			var invoice = new Invoice( repo )
+            IInvoiceRepository invoiceRepository = new InvoiceRepository();
+            IHandlePaymentHelper handlePaymentHelper = new HandlePaymentHelper();
+            IHandleInvoiceHelper handleInvoiceHelper = new HandleInvoiceHelper();
+            IPaymentProcessorFactory paymentProcessorFactory = new PaymentProcessorFactory(handleInvoiceHelper, handlePaymentHelper);
+
+            var invoice = new Invoice( invoiceRepository )
 			{
 				Amount = 10,
 				AmountPaid = 0,
 				Payments = new List<Payment>( ) { new Payment( ) { Amount = 10 } }
 			};
-			repo.Add( invoice );
+			invoiceRepository.Add( invoice );
 
-			var paymentProcessor = new InvoiceService( repo );
+			var paymentProcessor = new InvoiceService(invoiceRepository, paymentProcessorFactory);
 
 			var payment = new Payment( )
 			{
@@ -193,8 +223,12 @@ namespace RefactorThis.Domain.Tests
 		[Test]
 		public void ProcessPayment_Should_ReturnPartiallyPaidMessage_When_PartialPaymentExistsAndAmountPaidIsLessThanAmountDue( )
 		{
-			var repo = new InvoiceRepository( );
-			var invoice = new Invoice( repo )
+            IInvoiceRepository invoiceRepository = new InvoiceRepository();
+            IHandlePaymentHelper handlePaymentHelper = new HandlePaymentHelper();
+            IHandleInvoiceHelper handleInvoiceHelper = new HandleInvoiceHelper();
+            IPaymentProcessorFactory paymentProcessorFactory = new PaymentProcessorFactory(handleInvoiceHelper, handlePaymentHelper);
+
+            var invoice = new Invoice( invoiceRepository )
 			{
 				Amount = 10,
 				AmountPaid = 5,
@@ -206,9 +240,9 @@ namespace RefactorThis.Domain.Tests
 					}
 				}
 			};
-			repo.Add( invoice );
+			invoiceRepository.Add( invoice );
 
-			var paymentProcessor = new InvoiceService( repo );
+			var paymentProcessor = new InvoiceService( invoiceRepository, paymentProcessorFactory );
 
 			var payment = new Payment( )
 			{
@@ -223,16 +257,20 @@ namespace RefactorThis.Domain.Tests
 		[Test]
 		public void ProcessPayment_Should_ReturnPartiallyPaidMessage_When_NoPartialPaymentExistsAndAmountPaidIsLessThanInvoiceAmount( )
 		{
-			var repo = new InvoiceRepository( );
-			var invoice = new Invoice( repo )
+            IInvoiceRepository invoiceRepository = new InvoiceRepository();
+            IHandlePaymentHelper handlePaymentHelper = new HandlePaymentHelper();
+            IHandleInvoiceHelper handleInvoiceHelper = new HandleInvoiceHelper();
+            IPaymentProcessorFactory paymentProcessorFactory = new PaymentProcessorFactory(handleInvoiceHelper, handlePaymentHelper);
+
+            var invoice = new Invoice( invoiceRepository )
 			{
 				Amount = 10,
 				AmountPaid = 0,
 				Payments = new List<Payment>( )
 			};
-			repo.Add( invoice );
+			invoiceRepository.Add( invoice );
 
-			var paymentProcessor = new InvoiceService( repo );
+			var paymentProcessor = new InvoiceService( invoiceRepository, paymentProcessorFactory );
 
 			var payment = new Payment( )
 			{

@@ -4,8 +4,9 @@ namespace RefactorThis.Persistence
 {
 	public class Invoice
 	{
-		private readonly InvoiceRepository _repository;
-		public Invoice( InvoiceRepository repository )
+        // InvoiceService class was depending directly on a concrete implementation of InvoiceRepository, which is a violation of the Dependency Inversion Principle.
+        private readonly IInvoiceRepository _repository;
+		public Invoice(IInvoiceRepository repository )
 		{
 			_repository = repository;
 		}
